@@ -5,11 +5,31 @@ import Customer from "../models/Customer.js";
 const router = express.Router();
 
 // Book an appointment
+// Book an appointment
 router.post("/book", async (req, res) => {
   const { customerId, stylistId, date, time } = req.body;
+
   try {
+    // ✅ Handle test user (demo mode)
+    if (customerId === "test-user") {
+      return res.json({
+        success: true,
+        message: "Demo booking successful (test mode)",
+        appointment: {
+          _id: "demo123",
+          customerId,
+          stylistId,
+          date,
+          time,
+          status: "CN", // confirmed
+        },
+      });
+    }
+
+    // ✅ Normal booking (real MongoDB users)
     const appointment = new Appointment({ customerId, stylistId, date, time });
     await appointment.save();
+
     res.json({ success: true, message: "Appointment booked", appointment });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -63,6 +83,7 @@ router.post("/review/:id", async (req, res) => {
 router.patch("/:id", async (req, res) => {
   const { date, time, status } = req.body; // send one or more fields
   try {
+    
     const appointment = await Appointment.findById(req.params.id);
     if (!appointment) return res.status(404).json({ message: "Appointment not found" });
 

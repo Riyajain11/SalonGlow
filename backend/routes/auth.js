@@ -1,55 +1,86 @@
 import express from "express";
 import Customer from "../models/Customer.js";
-import twilio from "twilio";
 import dotenv from "dotenv";
 
 dotenv.config();
 const router = express.Router();
 
-const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+// Demo mode OTP store (temporary - in production use Redis)
+const otpStore = new Map();
 
-// Send OTP
+// Send OTP - DEMO MODE (No Twilio)
 router.post("/send-otp", async (req, res) => {
   const { phone } = req.body;
-  const otp = Math.floor(1000 + Math.random() * 9000).toString();
-
-  let customer = await Customer.findOne({ phone });
-  if (!customer) customer = new Customer({ phone, otp });
-  else customer.otp = otp;
-  await customer.save();
-
-  // Send OTP via Twilio
-  try {
-    await client.messages.create({
-      body: `Your OTP is ${otp}`,
-      from: process.env.TWILIO_PHONE_NUMBER,
-      to: phone,
-    });
-  } catch (err) {
-    console.error("Twilio Error:", err);
-    return res.status(500).json({ success: false, message: "Failed to send OTP" });
+  
+  if (!phone || phone.length < 10) {
+    return res.status(400).json({ success: false, message: "Valid phone number required" });
   }
 
-  res.json({ success: true, message: "OTP sent successfully" });
+  // Generate random 6-digit OTP
+  const otp = Math.floor(100000 + Math.random() * 900000).toString();
+  
+  // Store OTP with expiry (5 minutes)
+  otpStore.set(phone, {
+    otp: otp,
+    expiresAt: Date.now() + 5 * 60 * 1000
+  });
+  
+  console.log(`📱 DEMO MODE - OTP for ${phone}: ${otp}`);
+  
+  res.json({ 
+    success: true, 
+    message: "OTP sent successfully",
+    demoOtp: otp // Will be shown in alert on frontend
+  });
 });
 
-// Verify OTP
+// Verify OTP - DEMO MODE
 router.post("/verify-otp", async (req, res) => {
   const { phone, otp } = req.body;
-  if (!phone || !otp) return res.status(400).json({ message: "Phone and OTP required" });
+ 
+  if (!phone || !otp) {
+    return res.status(400).json({ message: "Phone and OTP required" });
+  }
 
   try {
-    const customer = await Customer.findOne({ phone });
-    if (!customer) return res.status(400).json({ message: "Customer not found" });
-
-    if (customer.otp === otp) {
-      // OTP matches
-      customer.otp = ""; // clear OTP after verification
-      await customer.save();
-      res.json({ success: true, customer });
-    } else {
-      res.status(400).json({ message: "Invalid OTP" });
+    // Check OTP in store
+    const storedData = otpStore.get(phone);
+    
+    if (!storedData) {
+      return res.status(400).json({ message: "OTP expired or not requested. Please request new OTP." });
     }
+    
+    if (storedData.expiresAt < Date.now()) {
+      otpStore.delete(phone);
+      return res.status(400).json({ message: "OTP has expired. Please request new OTP." });
+    }
+    
+    if (storedData.otp !== otp) {
+      return res.status(400).json({ message: "Invalid OTP. Please try again." });
+    }
+    
+    // OTP verified - find or create customer
+    let customer = await Customer.findOne({ phone });
+    
+    if (!customer) {
+      customer = new Customer({ phone, status: "active" });
+      await customer.save();
+    }
+    
+    // Clear OTP after successful verification
+    otpStore.delete(phone);
+    
+    res.json({ 
+      success: true, 
+      message: "OTP verified successfully",
+      customer: {
+        _id: customer._id,
+        phone: customer.phone,
+        name: customer.name,
+        age: customer.age,
+        gender: customer.gender
+      }
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Server error" });
@@ -76,6 +107,8 @@ router.post("/register", async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 });
+
+// Get customer by ID
 router.get("/customer/:id", async (req, res) => {
   try {
     const customer = await Customer.findById(req.params.id);
@@ -86,6 +119,5 @@ router.get("/customer/:id", async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 });
-
 
 export default router;
